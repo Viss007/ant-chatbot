@@ -1,0 +1,17 @@
+{
+  "name": "ant-chatbot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/server.js",
+    "start": "node src/server.js",
+    "health": "node -e \"fetch('http://localhost:3000/healthz').then(r=>r.text()).then(console.log).catch(e=>{console.error(e);process.exit(1)})\""
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "dotenv": "^17.2.2",
+    "express": "^4.21.2",
+    "openai": "^5.23.1"
+  }
+}

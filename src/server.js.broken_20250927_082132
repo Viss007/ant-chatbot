@@ -1,0 +1,92 @@
+﻿import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import { OpenAI } from "openai";
+import { supabase } from "./supabase.js";
+import { upsertMemory } from "./memory/googleDrive.js";
+const app = express();
+app.use(cors());
+app.use(express.json({ limit:"1mb" }));
+app.use(express.static("public"));
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const model = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const maxIn = Number(process.env.MAX_INPUT_TOKENS||500);
+const maxOut = Number(process.env.MAX_OUTPUT_TOKENS||1000);
+const daily = Number(process.env.DAILY_TOKEN_CEILING||50000);
+const timeoutMs = Number(process.env.REQUEST_TIMEOUT_MS||30000);
+const perConc = Number(process.env.PER_USER_CONCURRENCY||5);
+const active = new Map(); const dayUse = new Map();
+const today = ()=> new Date().toISOString().slice(0,10);
+const est = t => Math.ceil((t||"").length/4);
+async function withConc(id, fn){ const c=active.get(id)||0; if(c>=perConc){ const e=new Error("Too many concurrent requests"); e.status=429; throw e;} active.set(id,c+1); try{ return await fn(); } finally { active.set(id,(active.get(id)||1)-1);}}
+app.post("/api/chat", async (req, res) => {
+  try {
+    const b = req.body || {};
+    // normalize session identifier (support both casings)
+    const session_identifier = b.session_identifier ?? b.session_Identifier;
+    if (!session_identifier) {
+      return res.status(400).json({ error: "Missing session_identifier", received: b });
+    }
+    if (!b.question || typeof b.question !== "string" || !b.question.trim()) {
+      return res.status(400).json({ error: "Missing question", received: b });
+    }
+    // success echo to prove flow; replace with real logic later
+    return res.json({ ok: true, reply: "hello", session_identifier, question: b.question });
+  } catch (e) {
+    console.error("CHAT ERROR:", e);
+    return res.status(500).json({ error: "internal_error", detail: (e && e.message) || String(e) });
+  }
+});if (!b.question || typeof b.question !== "string" || !b.question.trim()) {
+      return res.status(400).json({ error: "Missing question", received: b });
+    }
+
+    // success echo to prove flow; replace with real logic later
+    return res.json({ ok: true, reply: "hello", session_identifier, question: b.question });
+  } catch (e) {
+    console.error("CHAT ERROR:", e);
+    return res.status(500).json({ error: "internal_error", detail: (e && e.message) || String(e) });
+  }
+});if(!question) return res.status(400).json({error:"Missing question"});
+  if(est(question)>maxIn) return res.status(400).json({error:`Input too long. Maximum tokens ${maxIn}.`});
+  const key = `${session_identifier}:${today()}`;
+  const used = dayUse.get(key)||0;
+  if(used+est(question)>daily) return res.status(429).json({error:"Daily token ceiling reached."});
+  const start=Date.now();
+  const controller = new AbortController();
+  const to = setTimeout(()=>controller.abort(), timeoutMs);
+  try {
+    const data = await withConc(session_identifier, async ()=>{
+      if(supabase) await supabase.from("messages").insert({ session_identifier, role:"user", message_text: question });
+      const comp = await client.chat.completions.create({
+        model, messages:[{role:"system", content:"You are Ant Chatbot."},{role:"user", content:question}], max_tokens:maxOut, temperature:0.2, timeout:timeoutMs, signal:controller.signal
+      });
+      const answer = comp.choices?.[0]?.message?.content ?? "";
+      const out = comp.usage?.completion_tokens ?? est(answer);
+      dayUse.set(key, used + est(question) + out);
+      if(supabase) await supabase.from("messages").insert({ session_identifier, role:"assistant", message_text: answer });
+      try{ await upsertMemory({ sessionIdentifier: session_identifier, topic:"chat", content:`Question:\n${question}\n\nAnswer:\n${answer}\n` }); }catch{}
+      return { answer, usage:{ inputTokens: est(question), outputTokens: out } };
+    });
+    clearTimeout(to);
+    res.json({ ...data, ms: Date.now()-start });
+  } catch(err){ clearTimeout(to); res.status(err.status||500).json({ error: err.message||"Server error" }); }
+});
+app.get("/api/history", async (req,res)=>{
+  const s = req.query.session_identifier;
+  if(!s) return res.status(400).json({error:"Missing session_identifier"});
+  const { data, error } = await (supabase?.from("messages").select("role,message_text,created_time").eq("session_identifier", s).order("created_time",{ascending:false}).limit(20) ?? {data:null,error:{message:"Supabase not configured"}});
+  if(error && !data) return res.status(500).json({ error: error.message });
+  res.json({ messages: (data||[]).reverse() });
+});
+const port = process.env.PORT||3000;
+app.listen(port, ()=> console.log(`http://localhost:${port}`));
+    
+// Added by audit_fix.ps1 — health endpoint
+app.get("/healthz", (req, res) => {
+  res.type("text/plain").send("ok");
+});
+
+
+
+
+

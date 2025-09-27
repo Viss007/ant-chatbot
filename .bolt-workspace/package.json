@@ -1,0 +1,14 @@
+﻿{
+  "name": "ant-chatbot-bolt",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-run.js",
+    "check": "node scripts/checks.js"
+  },
+  "dependencies": {
+    "execa": "^9.5.2",
+    "yaml": "^2.5.1"
+  }
+}

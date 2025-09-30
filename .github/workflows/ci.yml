@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Check for required files
+      run: |
+        if [ ! -f "src/server.js" ]; then
+          echo "Error: src/server.js not found"
+          exit 1
+        fi
+        if [ ! -f "package.json" ]; then
+          echo "Error: package.json not found"
+          exit 1
+        fi
+        echo "All required files present"
+
+    - name: Validate environment configuration
+      run: |
+        if [ ! -f ".env.example" ]; then
+          echo "Warning: .env.example not found"
+        else
+          echo ".env.example present"
+        fi
+
+    - name: Start server and health check
+      run: |
+        # Create a minimal .env for testing
+        echo "PORT=3000" > .env
+        echo "SUPABASE_URL=https://test.supabase.co" >> .env
+        echo "SUPABASE_SERVICE_ROLE_KEY=test-key" >> .env
+        
+        # Start server in background
+        npm start &
+        SERVER_PID=$!
+        
+        # Wait for server to start (up to 10 seconds)
+        for i in {1..10}; do
+          if curl -f http://localhost:3000/healthz > /dev/null 2>&1; then
+            echo "Server health check passed"
+            kill $SERVER_PID || true
+            exit 0
+          fi
+          sleep 1
+        done
+        
+        echo "Server health check failed"
+        kill $SERVER_PID || true
+        exit 1
+
+    - name: Check /mode endpoint
+      run: |
+        # Create a minimal .env for testing
+        echo "PORT=3000" > .env
+        echo "SUPABASE_URL=https://test.supabase.co" >> .env
+        echo "SUPABASE_SERVICE_ROLE_KEY=test-key" >> .env
+        
+        # Start server in background
+        npm start &
+        SERVER_PID=$!
+        
+        # Wait for server to start
+        sleep 3
+        
+        # Check /mode endpoint
+        RESPONSE=$(curl -s http://localhost:3000/mode)
+        echo "Mode response: $RESPONSE"
+        
+        if echo "$RESPONSE" | grep -q "openai"; then
+          echo "/mode endpoint working correctly"
+          kill $SERVER_PID || true
+          exit 0
+        else
+          echo "/mode endpoint check failed"
+          kill $SERVER_PID || true
+          exit 1
+        fi
+
+    - name: Check /version endpoint
+      run: |
+        # Create a minimal .env for testing
+        echo "PORT=3000" > .env
+        echo "SUPABASE_URL=https://test.supabase.co" >> .env
+        echo "SUPABASE_SERVICE_ROLE_KEY=test-key" >> .env
+        
+        # Start server in background
+        npm start &
+        SERVER_PID=$!
+        
+        # Wait for server to start
+        sleep 3
+        
+        # Check /version endpoint
+        RESPONSE=$(curl -s http://localhost:3000/version)
+        echo "Version response: $RESPONSE"
+        
+        if echo "$RESPONSE" | grep -q "version"; then
+          echo "/version endpoint working correctly"
+          kill $SERVER_PID || true
+          exit 0
+        else
+          echo "/version endpoint check failed"
+          kill $SERVER_PID || true
+          exit 1
+        fi
